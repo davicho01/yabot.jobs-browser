@@ -41,5 +41,4 @@ secrets.
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal and
-noncommercial use; commercial use requires separate permission.
+[MIT](LICENSE)
