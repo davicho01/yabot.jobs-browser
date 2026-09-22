@@ -109,12 +109,23 @@ def fetch(request: FetchRequest) -> FetchResponse:
                     try:
                         page.wait_for_selector(request.wait_for_selector, timeout=_DEFAULT_TIMEOUT_MS)
                     except PlaywrightTimeoutError:
-                        # Diagnostic only (temporary): log a snippet of
-                        # whatever actually rendered so a stuck selector wait
-                        # can be told apart from "still shows the WAF
-                        # challenge" vs. "real page, wrong selector" without
-                        # needing direct access to this private service.
-                        logger.warning("wait_for_selector snippet for %s: %s", request.url, page.content()[:3000])
+                        # Diagnostic only (temporary): the <head> alone
+                        # doesn't say whether this is a real page with no
+                        # results yet vs. one with results under a
+                        # different markup shape - check for the substring
+                        # everywhere and show the <body>, not just the
+                        # first N bytes (mostly meta tags/CSP nonces).
+                        content = page.content()
+                        has_job_link = "/careers/JobDetail/" in content
+                        body_start = content.find("<body")
+                        body_snippet = content[body_start : body_start + 4000] if body_start != -1 else "(no <body>)"
+                        logger.warning(
+                            "wait_for_selector timeout for %s: has_job_link=%s len=%d body=%s",
+                            request.url,
+                            has_job_link,
+                            len(content),
+                            body_snippet,
+                        )
                         raise
                 return FetchResponse(html=page.content(), final_url=page.url)
             finally:
