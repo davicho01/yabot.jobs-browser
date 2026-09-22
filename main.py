@@ -106,27 +106,7 @@ def fetch(request: FetchRequest) -> FetchResponse:
                     # on its own timeout (caught below) as before.
                     logger.warning("networkidle wait timed out for %s; using page content as-is.", request.url)
                 if request.wait_for_selector:
-                    try:
-                        page.wait_for_selector(request.wait_for_selector, timeout=_DEFAULT_TIMEOUT_MS)
-                    except PlaywrightTimeoutError:
-                        # Diagnostic only (temporary): the 77 <a> tags on
-                        # this page aren't under /careers/JobDetail/ at all -
-                        # find out what URL shape they actually use instead
-                        # of guessing. Cloud Run's stderr capture hard-
-                        # truncates a single long log line, so keep each one
-                        # short.
-                        import re as _re
-
-                        content = page.content()
-                        hrefs = _re.findall(r'href="([^"]{1,120})"', content)
-                        interesting = [
-                            h for h in hrefs if h not in ("#", "javascript:void(0)") and not h.startswith("javascript:")
-                        ]
-                        uniq = list(dict.fromkeys(interesting))
-                        logger.warning("wait_for_selector timeout for %s: %d hrefs, %d unique", request.url, len(hrefs), len(uniq))
-                        for i, h in enumerate(uniq[:40]):
-                            logger.warning("href[%d]=%r", i, h)
-                        raise
+                    page.wait_for_selector(request.wait_for_selector, timeout=_DEFAULT_TIMEOUT_MS)
                 return FetchResponse(html=page.content(), final_url=page.url)
             finally:
                 browser.close()
