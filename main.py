@@ -19,7 +19,14 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("browser_fetch_service")
 
-_DEFAULT_TIMEOUT_MS = 15_000
+# Some WAF-fronted tenants (verified live: careers.ibm.com's AWS WAF JS
+# challenge) take longer than a quick heuristic to actually clear - the
+# challenge itself, then a separate AJAX call for the real page content,
+# can together exceed 15s even though the page is genuinely just slow, not
+# broken. 35s leaves headroom under the service's own 90s Cloud Run request
+# timeout (see deploy.yml) even in the worst case of both the goto wait and
+# a subsequent wait_for_selector each running to their own full timeout.
+_DEFAULT_TIMEOUT_MS = 35_000
 
 app = FastAPI(title="Yabot Browser Fetch Service")
 
