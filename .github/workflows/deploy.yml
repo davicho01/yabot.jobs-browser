@@ -56,11 +56,18 @@ jobs:
           # across the whole fleet), scans failing and getting worse as
           # requests piled onto instances mid-OOM-restart. One Chromium
           # process per instance, with real headroom instead of squeezed
-          # into 1Gi. This is a shared service for every WAF/JS-render
-          # adapter fleet-wide, not just one source - max-instances=20 (a
-          # first guess), then 60, each immediately became its own
-          # bottleneck ("no available instance" aborts, verified live both
-          # times) - the second time under ordinary steady-state fleet
-          # traffic, not a one-off burst, so 100 is a real capacity raise,
-          # not just a bigger first guess.
-          flags: --min-instances=0 --max-instances=100 --concurrency=1 --memory=2Gi --timeout=90
+          # into 1Gi.
+          #
+          # max-instances went 20 -> 60 -> 100 chasing "no available
+          # instance" aborts that never actually stopped - verified live
+          # each time - because the ceiling was never the real bottleneck:
+          # with min-instances=0, only ~3 instances were ever actually
+          # running even at 100 max and under sustained heavy contention,
+          # and no new ones were starting. Cloud Run's reactive autoscaling
+          # isn't keeping up with this container's cold-start cost (a fresh
+          # Chromium launch per request, not just process boot) under
+          # bursty crawl-worker traffic. min-instances=3 keeps that many
+          # warm and ready as a guaranteed floor instead of depending on
+          # scale-from-zero fast enough to absorb a burst - a standing cost
+          # now, not just a peak-capacity knob.
+          flags: --min-instances=3 --max-instances=100 --concurrency=1 --memory=2Gi --timeout=90
