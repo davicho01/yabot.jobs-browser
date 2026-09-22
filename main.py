@@ -28,6 +28,31 @@ logger = logging.getLogger("browser_fetch_service")
 # a subsequent wait_for_selector each running to their own full timeout.
 _DEFAULT_TIMEOUT_MS = 35_000
 
+# careers.ibm.com's AWS WAF (Bot Control) lets a plain page load through but
+# never lets the SearchJobs results themselves render for this browser, even
+# well past every timeout above - consistent with fingerprinting Playwright's
+# default automation signals (navigator.webdriver=true, no window.chrome, a
+# UA containing "HeadlessChrome", empty plugins/mimeTypes) rather than a
+# timing issue. These are the standard, well-established patches for each of
+# those signals - not exhaustive stealth (no WebGL/canvas spoofing), but the
+# ones a Bot-Control-style check actually looks at first.
+_REALISTIC_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+)
+_STEALTH_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+window.chrome = { runtime: {} };
+Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) => (
+    parameters.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission })
+        : originalQuery(parameters)
+);
+"""
+
 app = FastAPI(title="Yabot Browser Fetch Service")
 
 
@@ -53,9 +78,18 @@ def fetch(request: FetchRequest) -> FetchResponse:
 
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
+            browser = playwright.chromium.launch(
+                args=["--disable-blink-features=AutomationControlled"],
+                ignore_default_args=["--enable-automation"],
+            )
             try:
-                page = browser.new_page()
+                context = browser.new_context(
+                    user_agent=_REALISTIC_USER_AGENT,
+                    viewport={"width": 1280, "height": 800},
+                    locale="en-US",
+                )
+                context.add_init_script(_STEALTH_INIT_SCRIPT)
+                page = context.new_page()
                 try:
                     page.goto(request.url, timeout=_DEFAULT_TIMEOUT_MS, wait_until="networkidle")
                 except PlaywrightTimeoutError:
