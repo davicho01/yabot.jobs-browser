@@ -109,28 +109,23 @@ def fetch(request: FetchRequest) -> FetchResponse:
                     try:
                         page.wait_for_selector(request.wait_for_selector, timeout=_DEFAULT_TIMEOUT_MS)
                     except PlaywrightTimeoutError:
-                        # Diagnostic only (temporary): Cloud Run's stderr
-                        # capture truncates a single long log line hard
-                        # (confirmed: a 4000-char body snippet in one
-                        # logger.warning call arrived cut off after ~15
-                        # bytes) - log short, targeted signals plus the
-                        # body in small chunks instead of one huge line.
+                        # Diagnostic only (temporary): the 77 <a> tags on
+                        # this page aren't under /careers/JobDetail/ at all -
+                        # find out what URL shape they actually use instead
+                        # of guessing. Cloud Run's stderr capture hard-
+                        # truncates a single long log line, so keep each one
+                        # short.
+                        import re as _re
+
                         content = page.content()
-                        lower = content.lower()
-                        signals = {
-                            "has_job_link": "/careers/jobdetail/" in lower,
-                            "has_no_results_text": any(
-                                s in lower for s in ("no jobs found", "no results", "0 results", "no matching")
-                            ),
-                            "a_tag_count": content.count("<a "),
-                            "script_tag_count": content.count("<script"),
-                        }
-                        logger.warning("wait_for_selector timeout for %s: len=%d %s", request.url, len(content), signals)
-                        body_start = content.find("<body")
-                        if body_start != -1:
-                            chunk = content[body_start : body_start + 900]
-                            for i in range(0, len(chunk), 150):
-                                logger.warning("body[%d]=%r", body_start + i, chunk[i : i + 150])
+                        hrefs = _re.findall(r'href="([^"]{1,120})"', content)
+                        interesting = [
+                            h for h in hrefs if h not in ("#", "javascript:void(0)") and not h.startswith("javascript:")
+                        ]
+                        uniq = list(dict.fromkeys(interesting))
+                        logger.warning("wait_for_selector timeout for %s: %d hrefs, %d unique", request.url, len(hrefs), len(uniq))
+                        for i, h in enumerate(uniq[:40]):
+                            logger.warning("href[%d]=%r", i, h)
                         raise
                 return FetchResponse(html=page.content(), final_url=page.url)
             finally:
