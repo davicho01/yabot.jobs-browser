@@ -56,5 +56,10 @@ jobs:
           # across the whole fleet), scans failing and getting worse as
           # requests piled onto instances mid-OOM-restart. One Chromium
           # process per instance, with real headroom instead of squeezed
-          # into 1Gi, and a cap on how many instances one crawl can spin up.
-          flags: --min-instances=0 --max-instances=20 --concurrency=1 --memory=2Gi --timeout=90
+          # into 1Gi. This is a shared service for every WAF/JS-render
+          # adapter fleet-wide, not just one source - max-instances=20
+          # (a first guess) immediately became its own bottleneck ("no
+          # available instance" aborts, verified live) under one crawl's
+          # ordinary concurrency; 60 leaves headroom for several sources'
+          # worth of concurrent renders without being unbounded.
+          flags: --min-instances=0 --max-instances=60 --concurrency=1 --memory=2Gi --timeout=90
