@@ -109,23 +109,28 @@ def fetch(request: FetchRequest) -> FetchResponse:
                     try:
                         page.wait_for_selector(request.wait_for_selector, timeout=_DEFAULT_TIMEOUT_MS)
                     except PlaywrightTimeoutError:
-                        # Diagnostic only (temporary): the <head> alone
-                        # doesn't say whether this is a real page with no
-                        # results yet vs. one with results under a
-                        # different markup shape - check for the substring
-                        # everywhere and show the <body>, not just the
-                        # first N bytes (mostly meta tags/CSP nonces).
+                        # Diagnostic only (temporary): Cloud Run's stderr
+                        # capture truncates a single long log line hard
+                        # (confirmed: a 4000-char body snippet in one
+                        # logger.warning call arrived cut off after ~15
+                        # bytes) - log short, targeted signals plus the
+                        # body in small chunks instead of one huge line.
                         content = page.content()
-                        has_job_link = "/careers/JobDetail/" in content
+                        lower = content.lower()
+                        signals = {
+                            "has_job_link": "/careers/jobdetail/" in lower,
+                            "has_no_results_text": any(
+                                s in lower for s in ("no jobs found", "no results", "0 results", "no matching")
+                            ),
+                            "a_tag_count": content.count("<a "),
+                            "script_tag_count": content.count("<script"),
+                        }
+                        logger.warning("wait_for_selector timeout for %s: len=%d %s", request.url, len(content), signals)
                         body_start = content.find("<body")
-                        body_snippet = content[body_start : body_start + 4000] if body_start != -1 else "(no <body>)"
-                        logger.warning(
-                            "wait_for_selector timeout for %s: has_job_link=%s len=%d body=%s",
-                            request.url,
-                            has_job_link,
-                            len(content),
-                            body_snippet,
-                        )
+                        if body_start != -1:
+                            chunk = content[body_start : body_start + 900]
+                            for i in range(0, len(chunk), 150):
+                                logger.warning("body[%d]=%r", body_start + i, chunk[i : i + 150])
                         raise
                 return FetchResponse(html=page.content(), final_url=page.url)
             finally:
