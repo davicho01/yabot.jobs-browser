@@ -106,7 +106,16 @@ def fetch(request: FetchRequest) -> FetchResponse:
                     # on its own timeout (caught below) as before.
                     logger.warning("networkidle wait timed out for %s; using page content as-is.", request.url)
                 if request.wait_for_selector:
-                    page.wait_for_selector(request.wait_for_selector, timeout=_DEFAULT_TIMEOUT_MS)
+                    try:
+                        page.wait_for_selector(request.wait_for_selector, timeout=_DEFAULT_TIMEOUT_MS)
+                    except PlaywrightTimeoutError:
+                        # Diagnostic only (temporary): log a snippet of
+                        # whatever actually rendered so a stuck selector wait
+                        # can be told apart from "still shows the WAF
+                        # challenge" vs. "real page, wrong selector" without
+                        # needing direct access to this private service.
+                        logger.warning("wait_for_selector snippet for %s: %s", request.url, page.content()[:3000])
+                        raise
                 return FetchResponse(html=page.content(), final_url=page.url)
             finally:
                 browser.close()
