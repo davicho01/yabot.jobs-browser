@@ -53,12 +53,46 @@ window.navigator.permissions.query = (parameters) => (
 );
 """
 
+# page.content() serializes the light DOM only — any web-component that
+# renders its real content into a shadow root (verified live: UltiPro/UKG
+# Pro's "Ignite" design system, used by several ATS tenants) comes back as
+# an empty custom-element shell no matter how long you wait, open or closed
+# shadow root alike. This walks the real, live DOM tree in-page instead of
+# asking Chromium for its own serialization, inlining every open shadow
+# root's children at the point their host element would otherwise be empty
+# — regex-based adapters downstream then see shadow content as if it were
+# always part of the regular tree. Opt-in (see pierce_shadow below) since
+# it's slower than page.content() and unnecessary for the ~90 other
+# call sites that don't need it.
+_SHADOW_PIERCING_SERIALIZE_SCRIPT = """
+() => {
+    const voidTags = new Set(['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr']);
+    const escapeAttr = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    function serialize(node) {
+        if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+        if (node.nodeType !== Node.ELEMENT_NODE) return '';
+        const tag = node.tagName.toLowerCase();
+        let html = '<' + tag;
+        for (const attr of node.attributes) html += ' ' + attr.name + '="' + escapeAttr(attr.value) + '"';
+        if (voidTags.has(tag)) return html + '>';
+        html += '>';
+        if (node.shadowRoot) for (const child of Array.from(node.shadowRoot.childNodes)) html += serialize(child);
+        for (const child of Array.from(node.childNodes)) html += serialize(child);
+        return html + '</' + tag + '>';
+    }
+    return serialize(document.documentElement);
+}
+"""
+
 app = FastAPI(title="Yabot Browser Fetch Service")
 
 
 class FetchRequest(BaseModel):
     url: str
     wait_for_selector: str | None = None
+    # See _SHADOW_PIERCING_SERIALIZE_SCRIPT above — only needed for tenants
+    # whose real content lives inside a shadow root.
+    pierce_shadow: bool = False
 
 
 class FetchResponse(BaseModel):
@@ -107,7 +141,8 @@ def fetch(request: FetchRequest) -> FetchResponse:
                     logger.warning("networkidle wait timed out for %s; using page content as-is.", request.url)
                 if request.wait_for_selector:
                     page.wait_for_selector(request.wait_for_selector, timeout=_DEFAULT_TIMEOUT_MS)
-                return FetchResponse(html=page.content(), final_url=page.url)
+                html = page.evaluate(_SHADOW_PIERCING_SERIALIZE_SCRIPT) if request.pierce_shadow else page.content()
+                return FetchResponse(html=html, final_url=page.url)
             finally:
                 browser.close()
     except Exception:
